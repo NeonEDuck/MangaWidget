@@ -7,8 +7,6 @@ String.prototype.toTitleCase = function() {
   })
 }
 
-const regMatchTrim = (e, i, r) => {return e.match(r)[0].substring(i).trim()}
-
 const mangaRequest = new Request("")
 const xcallback = new CallbackURL(`scriptable:///run/${encodeURIComponent(Script.name())}`)
 const fm = FileManager.local()
@@ -80,7 +78,7 @@ main: {
       let type = mJson.type.toLowerCase().trim()
       let link = mJson.link.trim()
       
-      var manga = await GetMangaChapters(link, type)
+      var manga = await GetMangaChapters(link, type, true)
 
       showJson[manga.title] = {link: manga.list.link, chapters: manga.list.chapters.slice(0, CHECK_UPDATE_AMOUNT), type: type}
     }
@@ -119,7 +117,7 @@ main: {
     // whether user select a chapter or want to see manga chapterlist
     if (args.queryParameters.chapterindex !== undefined) {
       var idx = parseInt(args.queryParameters.chapterindex)
-      await ShowMangaChapter(title, chapters[idx], type, mangalink, idx)
+      await ShowMangaChapter(title, chapters, idx, type, mangalink)
     }
     else {
       var lastRead = ""
@@ -245,7 +243,9 @@ function AddText(stack, text) {
   return t
 }
 
-async function ShowMangaChapter(title, mangaChapter, type, mangalink, idx=null) {
+async function ShowMangaChapter(title, chapters, idx, type, mangalink) {
+  var mangaChapter = chapters[idx]
+
   let json = {}
   if (fm.fileExists(path)) {
     json = JSON.parse(await fm.readString(path))
@@ -257,37 +257,59 @@ async function ShowMangaChapter(title, mangaChapter, type, mangalink, idx=null) 
   }
 
   mangaRequest.url = mangaChapter.link
-  var html = "<head><style>img{width:100%}a{display:inline-block;width:calc(50% - 0.5em);height:1.25em;margin:0.25em;font-size:5em;text-align:center;verticle-align:middle;background-color:#3377ff;color:#fff;text-decoration:none}a.disable{background-color:#ccc}</style></head>"
+  var html = `
+  <head>
+  <style>
+    img {
+      width:100%;
+    }
+    a {
+      display:inline-block;
+      width:calc(50% - 0.5em);
+      height:1.25em;
+      margin:0.25em;
+      font-size:5em;
+      text-align:center;
+      verticle-align:middle;
+      background-color:#3377ff;
+      color:#fff;
+      text-decoration:none;
+    }
+    a.disable {
+      background-color:#ccc;
+    }
+  </style>
+  </head>`
 
+  var regexp
   var cpt = await mangaRequest.loadString()
   if (type === "mangajar") {
-    var imgs = cpt.match(/data-alternative=".+(?="\s+class=.+lazy-preload[^>]+>)/g)
-
-    imgs.forEach((s, i, arr) => {  
-      arr[i] = s.substring(18).trim()
-      html += `<img src="${arr[i]}">`
-    })
+    regexp = /data-alternative="\s*(.+)\s*"\s+class=.+lazy-preload[^>]+>/g
   }
   else if (type === "mangaclash") {
-    var imgs = cpt.match(/data-src="\s*.+(?=\s*"\s+class="wp-manga-chapter-img)/g)
-
-    imgs.forEach((s, i, arr) => {  
-      arr[i] = s.substring(10).trim()
-      html += `<img src="${arr[i]}">`
-    })
+    regexp = /data-src="\s*(.+)\s*"\s+class="wp-manga-chapter-img/g
   }
-  if (idx !== null) {
 
-    var xml = `scriptable:///run/${encodeURIComponent(Script.name())}?title=${encodeURIComponent(title)}&manga=${encodeURIComponent(mangalink)}&type=${type}&chapterindex=`
+  [...cpt.matchAll(regexp)].forEach((img) => {
+    html += `<img src="${img[1]}">`
+  })
 
+
+
+  var xml = `scriptable:///run/${encodeURIComponent(Script.name())}?title=${encodeURIComponent(title)}&manga=${encodeURIComponent(mangalink)}&type=${type}&chapterindex=`
+
+  if (idx === chapters.length-1) {
+    html += "<a class='btn disable'>上一話</a>"
+  }
+  else {
     html += `<a class='btn' href='${xml+(idx+1).toString()}'>上一話</a>`
-    
-    if (idx === 0) {
-      html += "<a class='btn disable'>下一話</a>"
-    }
-    else {
-      html += `<a class='btn' href='${xml+(idx-1).toString()}'>下一話</a>`
-    }
+  }
+
+  if (idx === 0) {
+    html += "<a class='btn disable'>下一話</a>"
+  }
+  else {
+    html += `<a class='btn' href='${xml+(idx-1).toString()}'>下一話</a>`
   }
 
   wv = new WebView()
@@ -296,57 +318,70 @@ async function ShowMangaChapter(title, mangaChapter, type, mangalink, idx=null) 
   
 }
 
-async function GetMangaChapters(link, type) {
+async function GetMangaChapters(link, type, onepage=false) {
+  var title = ""
+  var chapters = []
   if (type === "mangajar") {
     var chplink = link.endsWith("chaptersList")?link:link.endsWith("/")?link+"chaptersList":link+"/chaptersList"
-    var chpList = await new Request(chplink).loadString()
-    var newTitle = regMatchTrim(chplink, 6, /manga\/.+(?=\/chaptersList)/g).replace(/-/g, " ").toTitleCase()
-    var chaptersdata = chpList.match(/<a href=".+"\s+class="">\s+<span class="chapter-title">\s*.+\s*<\/span>[\s\d\w]+?<\/a>/g)
+    title = chplink.match(/manga\/(.+)\/chaptersList/)[1].replace(/-/g, " ").toTitleCase()
+
     var pagedatas = []
     var p = []
-    var loadPage = async (i) => {pagedatas[i] = (await new Request(`${chplink}?page=${i}`).loadString()).match(/<a href=".+"\s+class="">\s+<span class="chapter-title">\s*.+\s*<\/span>[\s\d\w]+?<\/a>/g)}
-    for (i = 2; i < 2+MAX_SEARCH_PAGE; i++) {
-      p.push(loadPage(i))
+
+    var regexp = /<a href="(.+)(?:"\s+class="">\s+<span class="chapter-title">\s*)(.+?)\s*<\/span>\s*(?:(.+?)\s*)?<\/a>/g
+    
+    var loadPage = async (i) => {
+      var page = [...(await new Request(`${chplink}?page=${i}`).loadString()).matchAll(regexp)]
+      
+      pagedatas[i-1] = page.map(x => {return {
+        link: "https://mangajar.com" + x[1],
+        name: DecodeHTMLEntities(x[2]+(x[3]?" "+x[3]:""))
+      }})
+    }
+    
+    if (onepage) {
+      p.push(loadPage(1))
+    }
+    else {
+      for (i = 1; i <= MAX_SEARCH_PAGE; i++) {
+        p.push(loadPage(i))
+      }
     }
 
     await Promise.all(p)
 
-    for (var page of pagedatas) {
-      if (page === null || page === undefined) continue
-      chaptersdata = chaptersdata.concat(page)
-    }
-
-    var chapters = []
-
-    chaptersdata.forEach((e) => {
-      var link  = "https://mangajar.com" + regMatchTrim(e, 9, /<a href=".+(?="\s+class="">)/g)
-      var title = regMatchTrim(e, 28, /<span class="chapter-title">\s*.+(?=\s*<\/span>)/g)
-      
-      var titlename = regMatchTrim(e, 7, /<\/span>\s+.+(?=\s+<\/a>)/g)
-      if (titlename !== "") {
-        title += " - " + titlename
-      }
-
-      chapters.push( {name: title, link: link} )
-    })
-    return {title: newTitle, list:{link: link, chapters: chapters}}
+    chapters = chapters.concat(...pagedatas)
   }
   else if (type === "mangaclash") {
+    title = link.match(/manga\/([^\/\s]+)\/?/)[1].replace(/-/g, " ").toTitleCase()
+
     var chpList = await new Request(link).loadString()
+    chapters = [...chpList.matchAll(/<li class="wp-manga-chapter\s*">\s*<a href="(.+?)">\s*([^]+?)\s*<\/a>/g)]
 
-    var newTitle = regMatchTrim(link, 6, /manga\/[^\/\s]+(?=\/?)/g).replace(/-/g, " ").toTitleCase()
-
-    var chaptersdata = chpList.match(/<li class="wp-manga-chapter\s*">[^]+?(?=<\/li>)/g)
-    
-    var chapters = []
-
-    chaptersdata.forEach((e) => {
-      var link  = regMatchTrim(e, 9, /<a href=".+(?=">)/g)
-      var title = regMatchTrim(e, 2, /">\s*.+(?=<\/a>)/g)
-      chapters.push( {name: title, link: link} )
-    })
-    return {title: newTitle, list:{link: link, chapters: chapters}}
+    chapters = chapters.map(x => {return {
+      link: x[1],
+      name: DecodeHTMLEntities(x[2])
+    }})
   }
 
-  return {title: "", list: {link: link, chapters:[]}}
+  return {title: title, list:{link: link, chapters: chapters}}
+}
+
+function DecodeHTMLEntities(text) {
+  var translate = {
+    "nbsp": " ",
+    "amp": "&",
+    "quot": "\"",
+    "lt": "<",
+    "gt": ">"
+  }
+  
+  var translate_re = new RegExp(`&(${Object.keys(translate).join("|")});`, "g")
+  
+  return text.replace(translate_re, function(match, entity){
+    return translate[entity]
+  }).replace(/&#(\d+);/gi, function(match, numStr) {
+    var num = parseInt(numStr, 10)
+    return String.fromCharCode(num)
+  })
 }
