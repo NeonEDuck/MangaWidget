@@ -10,6 +10,8 @@ String.prototype.toTitleCase = function() {
 const mangaRequest = new Request("")
 const xcallback = new CallbackURL(`scriptable:///run/${encodeURIComponent(Script.name())}`)
 const fm = FileManager.local()
+const table = new UITable()
+var tableOpened = false
 
 //===========================//
 //==========setting==========//
@@ -41,102 +43,156 @@ var mangaJson = [
   }
 ]
 
+var showJson = {}
+var oldJson = {}
+var mangatitle = args.queryParameters.title
+var mangalink = args.queryParameters.manga
+var mangatype = args.queryParameters.type
 
+await main()
 
-main: {
+async function main() {
 
   // get widget parameter
   if (args.widgetParameter !== null) {
     mangaJson = JSON.parse(args.widgetParameter)
   }
 
-  // whether it's open by using app/widget or XML
-  if (args.queryParameters.manga === undefined && DEBUG === false) {  
-    
+  if (tableOpened) {
+    var wait = new UITableRow()
+    wait.addText("Please Wait...").centerAligned()
+    table.removeAllRows()
+    table.addRow(wait)
+    PresentTable()
+  }
+
+  if (config.runsInWidget) {
     if (path === null) {
-      if (config.runsInWidget) {
-        let w = new ListWidget()
-        w.backgroundColor = new Color(cBackground)
-        w.addText("This widget required a bookmarked folder in order to work.")
-        w.addText(`Please create a bookmarked folder call \"${BOOKMARKED_FOLDER}\" for the widget to work.`)
+      let w = new ListWidget()
+      w.backgroundColor = new Color(cBackground)
+      w.addText("This widget required a bookmarked folder in order to work.")
+      w.addText(`Please create a bookmarked folder call \"${BOOKMARKED_FOLDER}\" for the widget to work.`)
 
-        Script.setWidget(w)
-      }
-      else {
-        var alert = new Alert()
-        alert.title = "This script required a bookmarked folder in order to work."
-        alert.message = `Please create a bookmarked folder call \"${BOOKMARKED_FOLDER}\" for the script to work.`
-        alert.present()
-      }
+      Script.setWidget(w)
       Script.complete()
-      break main
+      return
     }
-
-    var mangaList = []
-    var showJson = {}
 
     var maxShowNum = config.widgetFamily==="large"?6:config.widgetFamily==="small"?2:3
 
-    switch (config.widgetFamily) {
-      case "large":
-        maxShowNum = 6
-        break
-      case "medium":
-        maxShowNum = 3
-        break
-      case "small":
-        maxShowNum = 2
-        break
-      default:
-        if (args.queryParameters.openMangaList === "true") {
-          maxShowNum = mangaJson.length
-        }
-        else {
-          maxShowNum = 3
-        }
-        break
+    await PopulateShowJson(maxShowNum)
+
+    let widget = createWidget()
+    Script.setWidget(widget)
+    Script.complete()
+
+  }
+  else if (config.runsFromHomeScreen) {
+    // nothing
+  }
+  else if (config.runsInApp) {
+    if (path === null) {
+      var alert = new Alert()
+      alert.title = "This script required a bookmarked folder in order to work."
+      alert.message = `Please create a bookmarked folder call \"${BOOKMARKED_FOLDER}\" for the script to work.`
+      alert.present()
+      Script.complete()
+      return
     }
-
-    var loadManga = async (json, i) => {
-      var type = mJson.type.toLowerCase().trim()
-      var link = mJson.link.trim()
-
-      mangaList[i] = await GetMangaChapters(link, type, true)
-      mangaList[i].type = type
-    }
-    var i = 0
-    var p = []
-
-    for (mJson of mangaJson.slice(0,maxShowNum)) {
-      p.push( loadManga(mJson, i++) )
-    }
-    await Promise.all(p)
-
-    for (manga of mangaList) {
-      showJson[manga.title] = {link: manga.list.link, chapters: manga.list.chapters.slice(0, CHECK_UPDATE_AMOUNT), type: manga.type}
-    }
-
-    var oldJson = {}
     
-    if (fm.fileExists(path)) {
-      oldJson = JSON.parse(fm.readString(path))
+    if (mangalink !== undefined) {
+      var chapters = (await GetMangaChapters(mangalink, mangatype)).list.chapters
+  
+      // whether user select a chapter or want to see manga chapterlist
+      if (args.queryParameters.chapterindex !== undefined) {
+        var idx = parseInt(args.queryParameters.chapterindex)
+        ShowMangaChapter(mangatitle, chapters, idx, mangatype, mangalink)
+      }
+      else {
+        var rows = []
+        var lastRead = ""
+        if (fm.fileExists(path)) {
+          lastRead = JSON.parse(await fm.readString(path))[mangatitle]?.name
+        }
+  
+        table.removeAllRows()
+  
+        var backRow = new UITableRow()
+        backRow.addText("View all manga")
+        backRow.dismissOnSelect = false
+        backRow.onSelect = (idx) => {
+          mangatitle =  undefined
+          mangalink =   undefined
+          mangatype =   undefined
+          
+          main()
+        }
+        backRow.isHeader = true
+        table.addRow(backRow)
+
+        var pivot = false
+        for (var chapter of chapters){
+          var row = new UITableRow()
+          row.dismissOnSelect = false
+          
+          var notify = row.addText("●")
+          notify.widthWeight = 1
+  
+          if (chapter.name === lastRead) pivot = true
+  
+          if (pivot) {
+            notify.titleColor = new Color(cGold, 0)
+          }
+          else {
+            notify.titleColor = new Color(cGold, 1)
+          }
+          
+          var chapterCell = row.addText(chapter.name)
+          chapterCell.widthWeight = 9
+
+          var loading = row.addText("Loading...")
+
+          loading.widthWeight = 0
+          loading.titleColor = new Color("#fff", 0)
+          loading.rightAligned()
+  
+          row.onSelect = async (idx) => {
+            var pivot = false
+            var i = 1
+            for (var row of rows) {
+              if (i++ === idx) pivot = true
+              if (pivot) {
+                if (row.notify.titleColor.alpha === 0) break
+                row.notify.titleColor = new Color(cGold, 0)
+              }
+              else {
+                row.notify.titleColor = new Color(cGold, 1)
+              }
+            }
+            rows[idx-1].chapter.widthWeight = 6
+            rows[idx-1].loading.widthWeight = 3
+            rows[idx-1].loading.titleColor = new Color("#fff", 1)
+            PresentTable()
+            await ShowMangaChapter(mangatitle, chapters, idx-1, mangatype, mangalink)
+            rows[idx-1].chapter.widthWeight = 9
+            rows[idx-1].loading.widthWeight = 0
+            rows[idx-1].loading.titleColor = new Color("#fff", 0)
+            PresentTable()
+          }
+          rows.push({notify: notify, chapter: chapterCell, loading: loading})
+          table.addRow(row)
+        }
+        
+        PresentTable()
+      }
+
     }
     else {
-      fm.writeString(path, "{}")
-    }
-      
-    if (config.runsInWidget) {
-      let widget = createWidget()
-      
-      Script.setWidget(widget)
-      
-      Script.complete()
-    }
-    else if (args.queryParameters.openMangaList === "true") {
-      var table = new UITable()
+      await PopulateShowJson(mangaJson.length)
+
+      table.removeAllRows()
 
       var pivot = false
-
       var idxJson = []
 
       for (var title in showJson) {
@@ -150,7 +206,7 @@ main: {
         }
 
         var row = new UITableRow()
-        
+        row.dismissOnSelect = false
         var notify = row.addText("●")
        
         if (news) {
@@ -163,79 +219,20 @@ main: {
 
         row.addText(title).widthWeight = 9
         row.onSelect = (idx) => {
-          // showMangaChapter(title, chapters[idx], type)
-          xcallback.addParameter("title", idxJson[idx].title)
-          xcallback.addParameter("manga", idxJson[idx].link)
-          xcallback.addParameter("type", idxJson[idx].type)
-          xcallback.open()
-        }
-        table.addRow(row)
-      }
-
-      table.present()
-    }
-    else {
-      createWidget().presentMedium()
-    }
-  }
-  else {
-    let title = args.queryParameters.title
-    let mangalink = args.queryParameters.manga
-    let type = args.queryParameters.type
-
-    if (mangalink === undefined) {
-      title = "The Dangers In My Heart"
-      mangalink = "https://mangajar.com/manga/the-dangers-in-my-heart"
-      type = "mangajar"
-    }
-    var chapters = (await GetMangaChapters(mangalink, type)).list.chapters
-
-    // whether user select a chapter or want to see manga chapterlist
-    if (args.queryParameters.chapterindex !== undefined) {
-      var idx = parseInt(args.queryParameters.chapterindex)
-      await ShowMangaChapter(title, chapters, idx, type, mangalink)
-    }
-    else {
-      var lastRead = ""
-      if (fm.fileExists(path)) {
-        lastRead = JSON.parse(await fm.readString(path))[title]?.name
-      }
-
-      var table = new UITable()
-
-      var pivot = false
-      for (var chapter of chapters){
-        var row = new UITableRow()
-        
-        var notify = row.addText("●")
-        notify.widthWeight = 1
-
-        if (chapter.name === lastRead) pivot = true
-
-        if (pivot) {
-          notify.titleColor = new Color(cGold, 0)
-        }
-        else {
-          notify.titleColor = new Color(cGold, 1)
-        }
-        
-        row.addText(chapter.name).widthWeight = 9
-
-        row.onSelect = (idx) => {
-          // showMangaChapter(title, chapters[idx], type)
-          xcallback.addParameter("title", title)
-          xcallback.addParameter("manga", mangalink)
-          xcallback.addParameter("type", type)
-          xcallback.addParameter("chapterindex", idx.toString())
-          xcallback.open()
+          mangatitle =  args.queryParameters.title = idxJson[idx].title
+          mangalink =   args.queryParameters.manga = idxJson[idx].link
+          mangatype =   args.queryParameters.type = idxJson[idx].type
+          
+          main()
         }
         table.addRow(row)
       }
       
-      table.present()
+      PresentTable()
+
     }
-    
-    // Script.complete()
+
+    Script.complete()
   }
 }
 
@@ -248,7 +245,7 @@ function createWidget() {
   
   let w = new ListWidget()
   w.backgroundColor = new Color(cBackground)
-  w.url = `scriptable:///run/${encodeURIComponent(Script.name())}?openMangaList=true`
+  w.url = `scriptable:///run/${encodeURIComponent(Script.name())}`
   
   let s = w.addStack()
   s.layoutHorizontally()
@@ -334,6 +331,11 @@ function AddText(stack, text) {
 }
 
 async function ShowMangaChapter(title, chapters, idx, type, mangalink) {
+
+  wv = new WebView()
+  wv.present(true)
+  wv.loadHTML("<h1 style='margin-top:1em;text-align:center;font-family:verdana;font-size:3em'>Loading...<h1>")
+
   var mangaChapter = chapters[idx]
 
   let json = {}
@@ -356,9 +358,10 @@ async function ShowMangaChapter(title, chapters, idx, type, mangalink) {
     a {
       display:inline-block;
       width:calc(50% - 0.5em);
-      height:1.25em;
+      min-height:1.25em;
       margin:0.25em;
-      font-size:5em;
+      font-family:verdana;
+      font-size:4em;
       text-align:center;
       verticle-align:middle;
       background-color:#3377ff;
@@ -389,22 +392,20 @@ async function ShowMangaChapter(title, chapters, idx, type, mangalink) {
   var xml = `scriptable:///run/${encodeURIComponent(Script.name())}?title=${encodeURIComponent(title)}&manga=${encodeURIComponent(mangalink)}&type=${type}&chapterindex=`
 
   if (idx === chapters.length-1) {
-    html += "<a class='btn disable'>上一話</a>"
+    html += "<a class='btn disable'>Prev. Chapter</a>"
   }
   else {
-    html += `<a class='btn' href='${xml+(idx+1).toString()}'>上一話</a>`
+    html += `<a class='btn' href='${xml+(idx+1).toString()}'>Prev. Chapter</a>`
   }
 
   if (idx === 0) {
-    html += "<a class='btn disable'>下一話</a>"
+    html += "<a class='btn disable'>Next Chapter</a>"
   }
   else {
-    html += `<a class='btn' href='${xml+(idx-1).toString()}'>下一話</a>`
+    html += `<a class='btn' href='${xml+(idx-1).toString()}'>Next Chapter</a>`
   }
 
-  wv = new WebView()
   wv.loadHTML(html)
-  wv.present(true)
   
 }
 
@@ -457,6 +458,37 @@ async function GetMangaChapters(link, type, onepage=false) {
   return {title: title, list:{link: link, chapters: chapters}}
 }
 
+async function PopulateShowJson(maxShowNum = 3) {
+  var mangaList = []
+
+  var loadManga = async (json, i) => {
+    var type = mJson.type.toLowerCase().trim()
+    var link = mJson.link.trim()
+
+    mangaList[i] = await GetMangaChapters(link, type, true)
+    mangaList[i].type = type
+  }
+  var i = 0
+  var p = []
+
+  for (mJson of mangaJson.slice(0, maxShowNum)) {
+    p.push( loadManga(mJson, i++) )
+  }
+  await Promise.all(p)
+
+  for (manga of mangaList) {
+    showJson[manga.title] = {link: manga.list.link, chapters: manga.list.chapters.slice(0, CHECK_UPDATE_AMOUNT), type: manga.type}
+  }
+
+
+  if (fm.fileExists(path)) {
+    oldJson = JSON.parse(fm.readString(path))
+  }
+  else {
+    fm.writeString(path, "{}")
+  }
+}
+
 function DecodeHTMLEntities(text) {
   var translate = {
     "nbsp": " ",
@@ -474,6 +506,16 @@ function DecodeHTMLEntities(text) {
     var num = parseInt(numStr, 10)
     return String.fromCharCode(num)
   })
+}
+
+function PresentTable() {
+  if (tableOpened) {
+    table.reload()
+  } 
+  else {
+    tableOpened = true
+    table.present()
+  }
 }
 
 function getWidgetSizeInPoint(widgetSize = (config.runsInWidget ? config.widgetFamily : "medium")) {
