@@ -34,6 +34,33 @@ if (fm.bookmarkExists(BOOKMARKED_FOLDER)) {
   path = fm.bookmarkedPath(BOOKMARKED_FOLDER) + "/" + SAVE_FILE
 }
 
+// var mangaJson = [
+//   {
+//     "link":"https://mangajar.com/manga/the-dangers-in-my-heart",
+//     "type":"mangajar"
+//   },
+//   {
+//     "link":"https://mangaclash.com/manga/atsumare-fushigi-kenkyu-bu/",
+//     "type":"mangaclash"
+//   },
+//   {
+//     "link":"https://mangajar.com/manga/please-don-t-bully-me-nagatoro",
+//     "type":"mangajar"
+//   },
+//   {
+//     "link":"https://mangajar.com/manga/yancha-gal-no-anjou-san",
+//     "type":"mangajar"
+//   },
+//   {
+//     "link":"https://mangajar.com/manga/uzaki-chan-wa-asobitai",
+//     "type":"mangajar"
+//   },
+//   {
+//     "link":"https://mangajar.com/manga/please-go-home-akutsu-san",
+//     "type":"mangajar"
+//   },
+// ]
+
 var showJson = {}
 var savedJson = {}
 var mangatitle = args.queryParameters.title
@@ -641,10 +668,22 @@ function AddBackToMenu(text, cb = main) {
 async function PopulateShowJson(maxShowNum = 3) {
 
   if (fm.fileExists(path)) {
-    savedJson = JSON.parse(fm.readString(path))
+    savedJson = JSON.parse(fm.readString(path) || "{}")
   }
   else {
     fm.writeString(path, "{}")
+  }
+
+  if (!savedJson.setting) {
+    savedJson.setting = {
+      mangaJson: {}
+    }
+  }
+  if (!savedJson.setting?.mangaJson) {
+    savedJson.setting.mangaJson = {}
+  }
+  if (!savedJson.lastRead) {
+    savedJson.lastRead = {}
   }
   
   var mangaList = []
