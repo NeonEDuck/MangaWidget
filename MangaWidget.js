@@ -13,6 +13,15 @@ const fm = FileManager.local()
 const table = new UITable()
 var tableOpened = false
 
+const wssKV = {
+  bgColor:              {text: "Background color"            , default: "#555f5f"   , defaultText: "Default"},
+  spacerColor:          {text: "Spacer color"                , default: "#40444a"   , defaultText: "Default"},
+  titleColor:           {text: "Manga title color"           , default: "#ffffff"   , defaultText: "Default"},
+  hideSpacer:           {text: "Hide spacer"                 , default: false       , defaultText: "False"  },
+  bulletPointNotify:    {text: "Use bullet point to notify"  , default: false       , defaultText: "False"  },
+  bulletPointDecorate:  {text: "Show bullet point decoration", default: false       , defaultText: "False"  },
+}
+
 //===========================//
 //==========setting==========//
 //===========================//
@@ -20,6 +29,8 @@ var tableOpened = false
 const cGold       = "#dfaf22"
 const cBackground = "#555f5f"
 const cSpacer     = "#40444a"
+const cAdd        = "#3BD56C"
+const cRemove     = "#FE5E41"
 
 const SUPPORT_SITE = ["mangajar", "mangaclash"]
 
@@ -61,6 +72,7 @@ if (fm.bookmarkExists(BOOKMARKED_FOLDER)) {
 //   },
 // ]
 
+var widgetId = ""
 var showJson = {}
 var savedJson = {}
 var mangatitle = args.queryParameters.title
@@ -72,10 +84,16 @@ await main()
 
 async function main() {
 
-  // get widget parameter
-  // if (args.widgetParameter !== null) {
-  //   mangaJson = JSON.parse(args.widgetParameter)
-  // }
+  if (fm.fileExists(path)) {
+    if (fm.isFileStoredIniCloud(path)) {
+      await fm.downloadFileFromiCloud(path)
+    }
+  }
+
+  // get widget parameter (widget id)
+  if (args.widgetParameter !== null) {
+    widgetId = args.widgetParameter
+  }
 
   if (tableOpened) {
     var wait = new UITableRow()
@@ -101,7 +119,7 @@ async function main() {
 
     await PopulateShowJson(maxShowNum)
 
-    let widget = createWidget()
+    let widget = createWidget(widgetId)
     Script.setWidget(widget)
     Script.complete()
 
@@ -261,15 +279,17 @@ async function main() {
 
 //===========================//
 
-function createWidget() {
+function createWidget(id = "") {
   let widgetSize = getWidgetSizeInPoint()
   let spacerWidth = 5
   let paddingWidth = 7
   let notifyWidth = 15
   let settingWidth = 20
+
+  var wss = savedJson?.setting?.widgetStyleSheet[id] || {}
   
   let w = new ListWidget()
-  w.backgroundColor = new Color(cBackground)
+  w.backgroundColor = new Color(wss.bgColor || cBackground)
   if (config.widgetFamily === "small") {
     w.url = `scriptable:///run/${encodeURIComponent(Script.name())}`
     settingWidth = 0
@@ -282,13 +302,18 @@ function createWidget() {
   MainRow.size = widgetSize
   
   let notifyColumn = MainRow.addStack()
-  let spacer = MainRow.addStack()
+  let spacer
+  if (!wss.hideSpacer) {
+    spacer = MainRow.addStack()
+  }
   let mangaColumn = MainRow.addStack()
   let settingColumn = MainRow.addStack()
   
-  spacer.backgroundColor = new Color(cSpacer) 
-  spacer.size = new Size(spacerWidth, widgetSize.height-paddingWidth*2)
-  spacer.cornerRadius = 2.5
+  if (spacer) {
+    spacer.backgroundColor = new Color(wss.spacerColor || cSpacer) 
+    spacer.size = new Size(spacerWidth, widgetSize.height-paddingWidth*2)
+    spacer.cornerRadius = 2.5
+  }
   
   notifyColumn.layoutVertically()
   notifyColumn.size = new Size(notifyWidth, widgetSize.height)
@@ -324,22 +349,34 @@ function createWidget() {
       news=CHECK_UPDATE_AMOUNT
     }
     
-    AddRow(notifyColumn, mangaColumn, news, title, showJson[title]["chapters"][Math.max(news-1,0)], showJson[title]["link"], showJson[title]["type"])
+    AddRow(notifyColumn, mangaColumn, news, title, wss)
   }
 
   return w
 }
 
-function AddRow(s1, s2, news, title, json, mangalink, type) {    
+function AddRow(s1, s2, news, title, wss) {    
   let ts1 = s1.addStack()
   ts1.layoutVertically()
   ts1.size = new Size(s1.size.width, 0)
+  
+  let notify
+  if (wss.bulletPointNotify) {
+    notify = AddText(ts1, "●")
+  }
+  else {
+    notify = AddText(ts1, (news>Math.min(CHECK_UPDATE_AMOUNT,9)?"+":(wss.bulletPointDecorate&&news===0?"●":String(news))))
+  }
 
-  let notify = AddText(ts1, (news>Math.min(CHECK_UPDATE_AMOUNT,9)?"+":String(news)))
-  notify.textColor = new Color(cGold, (news>0)?1:0)
+  if (wss.bulletPointDecorate) {
+    notify.textColor = new Color((news>0)?cGold:wss.spacerColor || cSpacer)
+  }
+  else {
+    notify.textColor = new Color(cGold, (news>0)?1:0)
+  }
   notify.centerAlignText()
   
-  AddText(ts1, "0").textColor = new Color(cGold, 0)
+  AddText(ts1, "●").textColor = new Color(wss.spacerColor || cSpacer, wss.bulletPointDecorate?1:0)
   
   let ts2 = s2.addStack()
   ts2.layoutVertically()
@@ -347,18 +384,18 @@ function AddRow(s1, s2, news, title, json, mangalink, type) {
   
   let t1 = ts2.addText(title)
   t1.lineLimit = 2
-  t1.textColor = new Color("#fff", news?1.0:0.5)
+  t1.textColor = new Color(wss.titleColor || "#fff", news?1.0:0.5)
   t1.font = Font.boldSystemFont(17)
 
   if (config.widgetFamily !== "small") {
     t1.lineLimit = 1
     
-    let t2 = ts2.addText(json.name)
+    let t2 = ts2.addText(showJson[title]["chapters"][Math.max(news-1,0)].name)
     t2.lineLimit = 1
     t2.textColor = new Color("#fff", news?0.9:0.4)
   }
   
-  ts2.url = `scriptable:///run/${encodeURIComponent(Script.name())}?title=${encodeURIComponent(title)}&manga=${encodeURIComponent(mangalink)}&type=${type}`
+  ts2.url = `scriptable:///run/${encodeURIComponent(Script.name())}?title=${encodeURIComponent(title)}&manga=${encodeURIComponent(showJson[title]["link"])}&type=${showJson[title]["type"]}`
   
   // console.log(ts2.url)
 }
@@ -418,17 +455,24 @@ async function ShowMangaChapter(title, chapters, idx, type, mangalink) {
   var regexp
   var cpt = await mangaRequest.loadString()
   if (type === "mangajar") {
-    regexp = /data-alternative="\s*(.+)\s*"\s+class=.+lazy-preload[^>]+>/g
+    regexp = [
+      /data-alternative="\s*(.+)\s*"\s+class=.+lazy-preload[^>]+>/g,
+      /(?:class=".*?carousel-item.*?active.*?">\s*<img\s+src="|data-src="\s*)([^"\s]+?)(?:"\s+class=".*?lazy-preload.*?"|\s*"\s+)\s+width=/g,
+    ]
   }
   else if (type === "mangaclash") {
     regexp = /data-src="\s*(.+)\s*"\s+class="wp-manga-chapter-img/g
   }
 
-  [...cpt.matchAll(regexp)].forEach((img) => {
-    html += `<img src="${img[1]}">`
-  })
-
-
+  regexp = Array.isArray(regexp)?regexp:[regexp]
+  
+  for (re of regexp) {
+    var matchs = [...cpt.matchAll(re)]
+    if (matchs.length === 0) continue
+    matchs.forEach((img) => {
+      html += `<img src="${img[1]}">`
+    })
+  }
 
   var xml = `scriptable:///run/${encodeURIComponent(Script.name())}?title=${encodeURIComponent(title)}&manga=${encodeURIComponent(mangalink)}&type=${type}&chapterindex=`
 
@@ -524,7 +568,7 @@ async function AddManga() {
   alert.addCancelAction("Cancel")
   var i = await alert.present()
   if (i !== -1) {
-    var link = alert.textFieldValue(i)
+    var link = alert.textFieldValue(0)
     var title = GetMangaName(link)
     if (title !== null) {
       if (title !== "") {
@@ -535,7 +579,7 @@ async function AddManga() {
         fm.writeString(path, JSON.stringify(savedJson, null, "\t"))
         OpenMangaManageMenu()
         var alert = new Alert()
-        alert.title = `manga "${title}" has been added!`
+        alert.title = `Manga "${title}" has been added!`
         alert.present()
       }
       else {
@@ -546,7 +590,7 @@ async function AddManga() {
     }
     else {
       var alert = new Alert()
-      alert.title = "Please enter a vaild link"
+      alert.title = "Please enter a vaild link!"
       alert.present()
     }
   }
@@ -554,7 +598,7 @@ async function AddManga() {
 
 async function RemoveManga(title) {
   var alert = new Alert()
-  alert.title = `Are you sure you want to remove ${title}`
+  alert.title = `Are you sure you want to remove "${title}"?`
   alert.addAction("Confirm")
   alert.addCancelAction("Cancel")
   var i = await alert.present()
@@ -564,12 +608,12 @@ async function RemoveManga(title) {
       fm.writeString(path, JSON.stringify(savedJson, null, "\t"))
       OpenMangaManageMenu()
       var alert = new Alert()
-      alert.title = `manga "${title}" has been remove!`
+      alert.title = `Manga "${title}" has been remove!`
       alert.present()
     }
     else {
       var alert = new Alert()
-      alert.title = `manga "${title}" is not in the list!`
+      alert.title = `Manga "${title}" is not in the list!`
       alert.present()
     }
   }
@@ -584,28 +628,155 @@ async function OpenMangaManageMenu() {
   var titleList = []
 
   if (!setting.mangaJson) setting.mangaJson = {}
+
+  var i = 0
   for (var title in setting.mangaJson) {
     titleList.push(title)
-    var row = new UITableRow()
+
+    var row = new FunctionRow()
+    row.onSelect = (idx) => {RemoveManga(titleList[idx-1])}
     row.dismissOnSelect = false
 
-    var removeIcon = row.addText("－")
-    removeIcon.widthWeight = 1
-    removeIcon.titleColor = new Color("#FE5E41")
-    row.addText(title).widthWeight = 9
+    var minus = row.addText("－")
+    minus.titleColor = new Color(cRemove)
+    minus.widthWeight = 1
 
-    row.onSelect = (idx) => {RemoveManga(titleList[idx-1])}
+    var titleCell = row.addText(title)
+    titleCell.widthWeight = 7
+
+    var downArrow
+    if (i === Object.keys(setting.mangaJson).length-1) {
+      downArrow = row.addButton("")
+    }
+    else {
+      downArrow = row.addButton("↓")
+      downArrow.ia = i
+      downArrow.onTap = ()=>{a = new Alert();a.title=this.ia.toString();a.present()}
+    }
+    downArrow.widthWeight = 1
+
+    var upArrow
+    if (i === 0) {
+      upArrow = row.addButton("")
+    }
+    else {
+      upArrow = row.addButton("↑")
+      upArrow.onTap = ()=>{a = new Alert();a.title="up";a.present()}
+    }
+    upArrow.widthWeight = 1
+    i++
+
     table.addRow(row)
   }
 
-  var addMangaRow = new UITableRow()
-  addMangaRow.dismissOnSelect = false
-  var addIcon = addMangaRow.addText("＋")
-  addIcon.widthWeight = 1
-  addIcon.titleColor = new Color("#3BD56C")
-  addMangaRow.addText("AddManga").widthWeight = 9
-  addMangaRow.onSelect = AddManga
-  table.addRow(addMangaRow)
+  table.addRow(AddFunctionRow("Add Manga", {text: "＋", color: cAdd}, {}, AddManga))
+
+  savedJson.setting = setting
+
+  // await fm.writeString(path, JSON.stringify(oldJson, null, "\t"))
+
+  PresentTable()
+}
+
+async function AddWidgetStyleSheet() {
+  var id = ""
+
+  while (id === "" || savedJson.setting.widgetStyleSheet[id]) {
+    id = UUID.string().substring(0, 8)
+  }
+
+  savedJson.setting.widgetStyleSheet[id] = {}
+  fm.writeString(path, JSON.stringify(savedJson, null, "\t"))
+  OpenMangaWidgetMenu()
+
+  var alert = new Alert()
+  alert.title = `A widget style sheet has been added!`
+  alert.message = `Copy the ID down below, and paste it into the "Parameter" field of your desire widget.\nID: ${id}`
+  alert.addAction("Copy")
+  alert.addCancelAction("Okay")
+  var i = await alert.present()
+  if (i !== -1) {
+    Pasteboard.copy(id)
+  }
+}
+
+async function RemoveWidgetStyleSheet(id) {
+  
+  var alert = new Alert()
+  alert.title = `Do you want to remove this widget style sheet?`
+  alert.addAction("Remove")
+  alert.addCancelAction("Cancel")
+  var i = await alert.present()
+  if (i !== -1) {
+    delete savedJson.setting.widgetStyleSheet[id]
+    fm.writeString(path, JSON.stringify(savedJson, null, "\t"))
+
+    OpenMangaWidgetMenu()
+  }
+}
+
+async function EditWidgetStyleSheetValue(id, key) {
+  // QuickLook.present( savedJson.setting.widgetStyleSheet[id])
+  var alert = new Alert()
+  alert.title = `Edit value of "${wssKV[key].text}" to:`
+  alert.addTextField(wssKV[key].default.toString(), savedJson.setting.widgetStyleSheet[id][key]?.toString()||"")
+  alert.addAction("Confirm")
+  alert.addCancelAction("Cancel")
+  var i = await alert.present()
+  if (i !== -1) {
+    var nvalue = alert.textFieldValue(0)
+    
+    savedJson.setting.widgetStyleSheet[id][key] = nvalue
+    fm.writeString(path, JSON.stringify(savedJson, null, "\t"))
+    OpenWidgetStyleSheetMenu()
+  }
+}
+
+async function OpenWidgetStyleSheetMenu(id) {
+  var wss = savedJson.setting.widgetStyleSheet[id]
+  table.removeAllRows()
+
+  table.addRow(AddBackToMenu(null, OpenMangaWidgetMenu))
+  table.addRow(AddFunctionRow(`${id}`, {text: "ID:"}, {}, () => {
+    Pasteboard.copy(id)
+    var alert = new Alert()
+    alert.title = `ID Copied`
+    alert.addCancelAction("Okay")
+    alert.present()
+  }))
+
+  for (key in wssKV) {
+    table.addRow(AddFunctionRow(
+      `${wssKV[key].text}:`,
+      {},
+      {text: `${wss[key]?.toString()?.toTitleCase()||wssKV[key].defaultText}`,weight: 3},
+      (idx) => {
+        EditWidgetStyleSheetValue( id,Object.keys(wssKV)[idx-2] )
+      }
+    ))
+  }
+
+  table.addRow(AddFunctionRow(`Remove Widget Style Sheet`, {text: "－", color: cRemove}, {}, () => {RemoveWidgetStyleSheet( id )}))
+  PresentTable()
+}
+
+async function OpenMangaWidgetMenu() {
+  table.removeAllRows()
+
+  table.addRow(AddBackToMenu(null, OpenSettingMenu))
+
+  var setting = savedJson.setting || {}
+  var widgetList = []
+
+  if (!setting.widgetStyleSheet) setting.widgetStyleSheet = {}
+  for (var widgetId in setting.widgetStyleSheet) {
+    widgetList.push(widgetId)
+    table.addRow(AddFunctionRow(widgetId, {}, {text: "→"}, (idx) => {OpenWidgetStyleSheetMenu(widgetList[idx-1])}))
+
+    // row.onSelect = (idx) => {RemoveManga(widgetList[idx-1])}
+  }
+
+  table.addRow(AddFunctionRow("Add Custom Widget Style Sheet", {text: "＋", color: cAdd}, {}, AddWidgetStyleSheet))
 
   savedJson.setting = setting
 
@@ -632,14 +803,9 @@ async function OpenSettingMenu() {
   //   table.addRow(row)
   // }
 
-  var mangaManageRow = new UITableRow()
-  mangaManageRow.dismissOnSelect = false
-  mangaManageRow.addText("Manage manga selection").widthWeight = 9
-  var nextIcon = mangaManageRow.addText("→")
-  nextIcon.widthWeight = 1
-  nextIcon.rightAligned()
-  mangaManageRow.onSelect = OpenMangaManageMenu
-  table.addRow(mangaManageRow)
+  table.addRow(AddFunctionRow("Manage Manga Selection",           {}, {text: "→"}, OpenMangaManageMenu))
+
+  table.addRow(AddFunctionRow("Manage Custom Widget Style Sheet", {}, {text: "→"}, OpenMangaWidgetMenu))
 
   savedJson.setting = setting
 
@@ -649,20 +815,66 @@ async function OpenSettingMenu() {
 }
 
 function AddBackToMenu(text, cb = main) {
-  var backRow = new UITableRow()
-  backRow.addText("←").widthWeight = 1
-  backRow.addText(text || "Back").widthWeight = 9
-  backRow.dismissOnSelect = false
-  backRow.onSelect = (idx) => {
+
+  var backRow = AddFunctionRow("Back", {text:"←"}, {}, (idx) => {
     mangatitle =  undefined
     mangalink =   undefined
     mangatype =   undefined
     opensetting = undefined
     
     cb()
-  }
+  })
   backRow.isHeader = true
   return backRow
+}
+
+class FunctionRow extends UITableRow {
+  
+  constructor(...values) {
+    super(...values)
+  }
+}
+
+function AddFunctionRow(text="", prefix={}, suffix={}, cb) {
+  var row = new UITableRow()
+  var hasPrefix = !!prefix?.text
+  var hasSuffix = !!suffix?.text
+  var prefixW = hasPrefix?(prefix.weight||1):0
+  var suffixW = hasSuffix?(suffix.weight||1):0
+  var textW   = 10 - (prefixW + suffixW)
+
+  if (hasPrefix) {
+    var prefixCell = row.addText(prefix.text)
+    prefixCell.widthWeight = prefixW
+    if (prefix?.color) {
+      prefixCell.titleColor = new Color(prefix.color)
+    }
+  }
+
+  row.addText(text).widthWeight = textW
+
+  if (hasSuffix) {
+    var suffixCell
+    if (suffix.buttonAction) {
+      suffixCell = row.addButton(suffix.text)
+      suffixCell.onTap = suffix.buttonAction
+    }
+    else {
+      suffixCell = row.addText(suffix.text)
+    }
+    suffixCell.rightAligned()
+    suffixCell.widthWeight = suffixW
+    if (suffix?.color) {
+      suffixCell.titleColor = new Color(suffix.color)
+    }
+  }
+
+  if (cb) {
+    row.onSelect = cb
+  }
+  row.dismissOnSelect = false
+
+  return row
 }
 
 async function PopulateShowJson(maxShowNum = 3) {
