@@ -728,7 +728,7 @@ async function EditWidgetStyleSheetValue(id, key) {
     
     savedJson.setting.widgetStyleSheet[id][key] = nvalue
     fm.writeString(path, JSON.stringify(savedJson, null, "\t"))
-    OpenWidgetStyleSheetMenu()
+    OpenWidgetStyleSheetMenu(id)
   }
 }
 
